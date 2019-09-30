@@ -157,6 +157,18 @@ void RCSwitch::setPulseLength(int nPulseLength) {
 }
 
 /**
+  * Sets sync factor
+  */
+void RCSwitch::setSyncFactor(uint8_t nSyncFactorHigh, uint8_t nSyncFactorLow) {
+  if (nSyncFactorHigh > 0) {
+    this->protocol.syncFactor.high = nSyncFactorHigh;
+  }
+  if (nSyncFactorLow > 0) {
+    this->protocol.syncFactor.low = nSyncFactorLow;
+  }
+}
+
+/**
  * Sets Repeat Transmits
  */
 void RCSwitch::setRepeatTransmit(int nRepeatTransmit) {
