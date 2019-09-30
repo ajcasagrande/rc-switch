@@ -92,6 +92,8 @@ class RCSwitch {
     unsigned int getReceivedDelay();
     unsigned int getReceivedProtocol();
     unsigned int* getReceivedRawdata();
+    bool getReceivedInverted();
+    unsigned int getReceivedLevelInFirstTiming();
     #endif
   
     void enableTransmit(int nTransmitterPin);
@@ -103,7 +105,7 @@ class RCSwitch {
     #endif
 
     /**
-     * Description of a single pule, which consists of a high signal
+     * Description of a single pulse, which consists of a high signal
      * whose duration is "high" times the base pulse length, followed
      * by a low signal lasting "low" times the base pulse length.
      * Thus, the pulse overall lasts (high+low)*pulseLength
@@ -159,6 +161,7 @@ class RCSwitch {
     static void handleInterrupt();
     static bool receiveProtocol(const int p, unsigned int changeCount);
     int nReceiverInterrupt;
+    static int nStaticReceiverPin; // needed because nReceiverInterrupt (receiver pin) can not be read from handleInterrupt because it is static
     #endif
     int nTransmitterPin;
     int nRepeatTransmit;
@@ -171,10 +174,13 @@ class RCSwitch {
     volatile static unsigned int nReceivedBitlength;
     volatile static unsigned int nReceivedDelay;
     volatile static unsigned int nReceivedProtocol;
+    static bool nReceivedInverted;
+    static unsigned int nReceivedLevelInFirstTiming;
     const static unsigned int nSeparationLimit;
     /* 
      * timings[0] contains sync timing, followed by a number of bits
      */
+    static unsigned int firstperiodlevel;
     static unsigned int timings[RCSWITCH_MAX_CHANGES];
     #endif
 
