@@ -848,7 +848,7 @@ void RECEIVE_ATTR RCSwitch::handleInterrupt() {
   const long time = micros();
   const unsigned int duration = time - lastTime;
 
-  if (duration > RCSwitch::nSeparationLimit & changeCount != 1 ) {
+  if (duration > RCSwitch::nSeparationLimit && changeCount != 1 ) {
     // A long stretch without signal level change occurred. This could
     // be the gap between two transmission.
     // It allows a second long duration to be stored
