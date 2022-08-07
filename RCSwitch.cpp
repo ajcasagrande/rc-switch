@@ -13,13 +13,10 @@
   - Robert ter Vehn / <first name>.<last name>(at)gmail(dot)com
   - Johann Richard / <first name>.<last name>(at)gmail(dot)com
   - Vlad Gheorghe / <first name>.<last name>(at)gmail(dot)com https://github.com/vgheo
-<<<<<<< HEAD
   - Martin Laclaustra / <first name>.<last name>(at)gmail(dot)com
+  - Matias Cuenca-Acuna
+  - Anthony Casagrande
 
-=======
-  - Matias Cuenca-Acuna 
-  
->>>>>>> sui77/master
   Project home: https://github.com/sui77/rc-switch/
 
   This library is free software; you can redistribute it and/or
@@ -37,6 +34,7 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+#include <functional>
 #include "RCSwitch.h"
 
 #ifdef RaspberryPi
@@ -44,19 +42,6 @@
     // so we must normalize these for the ARM processor:
     #define PROGMEM
     #define memcpy_P(dest, src, num) memcpy((dest), (src), (num))
-#endif
-
-#if defined(ESP8266)
-    // interrupt handler and related code must be in RAM on ESP8266,
-    // according to issue #46.
-    #define RECEIVE_ATTR ICACHE_RAM_ATTR
-    #define VAR_ISR_ATTR
-#elif defined(ESP32)
-    #define RECEIVE_ATTR IRAM_ATTR
-    #define VAR_ISR_ATTR DRAM_ATTR
-#else
-    #define RECEIVE_ATTR
-    #define VAR_ISR_ATTR
 #endif
 
 
@@ -95,50 +80,31 @@ static const RCSwitch::Protocol PROGMEM proto[] = {
   { 200, { 130, 7 }, {  16, 7 }, { 16,  3 }, true},      // protocol 9 Conrad RS-200 TX
   { 365, { 18,  1 }, {  3,  1 }, {  1,  3 }, true },     // protocol 10 (1ByOne Doorbell)
   { 270, { 36,  1 }, {  1,  2 }, {  2,  1 }, true },     // protocol 11 (HT12E)
-  { 320, { 36,  1 }, {  1,  2 }, {  2,  1 }, true }      // protocol 12 (SM5212)
+  { 320, { 36,  1 }, {  1,  2 }, {  2,  1 }, true },      // protocol 12 (SM5212)
+  { 130, { 1,  80 }, {  2,  7 }, {  6,  3 }, false },      // protocol 13 (S72-RC11U, Fosmon)
+  { 189, { 1,  31 }, {  1,  3 }, {  3,  1 }, false }      // protocol 14 (Q92-BH-V, dewenwils)
 };
 
 enum {
    numProto = sizeof(proto) / sizeof(proto[0])
 };
 
-#if not defined( RCSwitchDisableReceiving )
-volatile unsigned long RCSwitch::nReceivedValue = 0;
-volatile unsigned int RCSwitch::nReceivedBitlength = 0;
-volatile unsigned int RCSwitch::nReceivedDelay = 0;
-volatile unsigned int RCSwitch::nReceivedProtocol = 0;
-bool RCSwitch::nReceivedInverted = false;
-unsigned int RCSwitch::nReceivedLevelInFirstTiming = 0;
-int RCSwitch::nReceiveTolerance = 60;
-
-const unsigned int VAR_ISR_ATTR RCSwitch::nSeparationLimit = 4300;
-// separationLimit: minimum microseconds between received codes, closer codes are ignored.
-// according to discussion on issue #14 it might be more suitable to set the separation
-// limit to the same time as the 'low' part of the sync signal for the current protocol.
-
-unsigned int RCSwitch::timings[RCSWITCH_MAX_CHANGES];
-
-unsigned int RCSwitch::firstperiodlevel;
-
-int RCSwitch::nStaticReceiverPin; // needed because nReceiverInterrupt (receiver pin) can not be read from handleInterrupt because it is static
-#endif
-
 RCSwitch::RCSwitch() {
   this->nTransmitterPin = -1;
-  this->setRepeatTransmit(10);
+  this->nRepeatTransmit = 10;
   this->setProtocol(1);
   #if not defined( RCSwitchDisableReceiving )
-  this->nReceiverInterrupt = -1;
-  this->setReceiveTolerance(60);
-  RCSwitch::nReceivedValue = 0;
+    this->nReceiverInterrupt = -1;
+    this->nReceiveTolerance = 60;
+    this->nReceivedValue = 0;
   #endif
 }
 
 /**
   * Sets the protocol to send.
   */
-void RCSwitch::setProtocol(Protocol protocol) {
-  this->protocol = protocol;
+void RCSwitch::setProtocol(Protocol _protocol) {
+  this->protocol = _protocol;
 }
 
 /**
@@ -149,7 +115,7 @@ void RCSwitch::setProtocol(int nProtocol) {
     nProtocol = 1;  // TODO: trigger an error, e.g. "bad protocol" ???
   }
 #if defined(ESP8266) || defined(ESP32)
-  this->protocol = proto[nProtocol-1];
+  memcpy_P(&this->protocol, &proto[nProtocol-1], sizeof(Protocol));
 #else
   memcpy_P(&this->protocol, &proto[nProtocol-1], sizeof(Protocol));
 #endif
@@ -186,8 +152,8 @@ void RCSwitch::setSyncFactor(uint8_t nSyncFactorHigh, uint8_t nSyncFactorLow) {
 /**
  * Sets Repeat Transmits
  */
-void RCSwitch::setRepeatTransmit(int nRepeatTransmit) {
-  this->nRepeatTransmit = nRepeatTransmit;
+void RCSwitch::setRepeatTransmit(int _nRepeatTransmit) {
+  this->nRepeatTransmit = _nRepeatTransmit;
 }
 
 /**
@@ -195,7 +161,7 @@ void RCSwitch::setRepeatTransmit(int nRepeatTransmit) {
  */
 #if not defined( RCSwitchDisableReceiving )
 void RCSwitch::setReceiveTolerance(int nPercent) {
-  RCSwitch::nReceiveTolerance = nPercent;
+  this->nReceiveTolerance = nPercent;
 }
 #endif
   
@@ -205,8 +171,8 @@ void RCSwitch::setReceiveTolerance(int nPercent) {
  *
  * @param nTransmitterPin    Arduino Pin to which the sender is connected to
  */
-void RCSwitch::enableTransmit(int nTransmitterPin) {
-  this->nTransmitterPin = nTransmitterPin;
+void RCSwitch::enableTransmit(int _nTransmitterPin) {
+  this->nTransmitterPin = _nTransmitterPin;
   pinMode(this->nTransmitterPin, OUTPUT);
 }
 
@@ -585,18 +551,18 @@ void RCSwitch::enableReceive(int interrupt) {
   }
 #endif
   this->nReceiverInterrupt = interrupt;
-  RCSwitch::nStaticReceiverPin = receiverpin;
+  this->nStaticReceiverPin = receiverpin;
   this->enableReceive();
 }
 
 void RCSwitch::enableReceive() {
   if (this->nReceiverInterrupt != -1) {
-    RCSwitch::nReceivedValue = 0;
-    RCSwitch::nReceivedBitlength = 0;
+    this->nReceivedValue = 0;
+    this->nReceivedBitlength = 0;
 #if defined(RaspberryPi) // Raspberry Pi
     wiringPiISR(this->nReceiverInterrupt, INT_EDGE_BOTH, &handleInterrupt);
 #else // Arduino
-    attachInterrupt(this->nReceiverInterrupt, handleInterrupt, CHANGE);
+    attachInterrupt(this->nReceiverInterrupt, std::bind(&RCSwitch::handleInterrupt, this), CHANGE);
 #endif
   }
 }
@@ -611,57 +577,57 @@ void RCSwitch::disableReceive() {
   this->nReceiverInterrupt = -1;
 }
 
-bool RCSwitch::available() {
-  return RCSwitch::nReceivedValue != 0;
+bool RCSwitch::available() const {
+  return this->nReceivedValue != 0;
 }
 
 void RCSwitch::resetAvailable() {
-  RCSwitch::nReceivedValue = 0;
+  this->nReceivedValue = 0;
 }
 
-unsigned long RCSwitch::getReceivedValue() {
-  return RCSwitch::nReceivedValue;
+unsigned long RCSwitch::getReceivedValue() const {
+  return this->nReceivedValue;
 }
 
-unsigned int RCSwitch::getReceivedBitlength() {
-  return RCSwitch::nReceivedBitlength;
+unsigned int RCSwitch::getReceivedBitlength() const {
+  return this->nReceivedBitlength;
 }
 
-unsigned int RCSwitch::getReceivedDelay() {
-  return RCSwitch::nReceivedDelay;
+unsigned int RCSwitch::getReceivedDelay() const {
+  return this->nReceivedDelay;
 }
 
-unsigned int RCSwitch::getReceivedProtocol() {
-  return RCSwitch::nReceivedProtocol;
+unsigned int RCSwitch::getReceivedProtocol() const {
+  return this->nReceivedProtocol;
 }
 
 unsigned int* RCSwitch::getReceivedRawdata() {
-  return RCSwitch::timings;
+  return this->timings;
 }
 
-bool RCSwitch::getReceivedInverted() {
-  return RCSwitch::nReceivedInverted;
+bool RCSwitch::getReceivedInverted() const {
+  return this->nReceivedInverted;
 }
 
-unsigned int RCSwitch::getReceivedLevelInFirstTiming() {
-  return RCSwitch::nReceivedLevelInFirstTiming;
+unsigned int RCSwitch::getReceivedLevelInFirstTiming() const {
+  return this->nReceivedLevelInFirstTiming;
 }
 
 /* helper function for the receiveProtocol method */
-static inline unsigned int diff(int A, int B) {
-  return abs(A - B);
+static inline unsigned int diff(unsigned int A, unsigned int B) {
+  return (A > B) ? A - B : B - A;
 }
 
 /**
  *
  */
-bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCount) {
+bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p) {
 
     int finalp = 0; // no protocol recognized
-    unsigned int tmpfirstperiodlevel = RCSwitch::firstperiodlevel; // store it before it is overwritten
+    unsigned int tmpfirstperiodlevel = this->firstperiodlevel; // store it before it is overwritten
 
     // ignore very short transmissions: no device sends them, so this must be noise
-    if (changeCount < 8) return false; // also ensure avoiding 0 division later
+    if (changeCount < RCSWITCH_MIN_CHANGE_COUNT) { return false; } // also ensure avoiding 0 division later
 
     // changeCount is the number of stored durations
     // timings positions span from 0 ... (changeCount - 1)
@@ -703,41 +669,41 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
 
     for (unsigned int i = 1; i < changeCount - 2; i += 2) {
 
-        unsigned int thisbitDuration = RCSwitch::timings[i]+RCSwitch::timings[i + 1];
+        unsigned int thisbitDuration = this->timings[i]+this->timings[i + 1];
         dataduration += thisbitDuration;
         squareddataduration += (unsigned long)thisbitDuration*(unsigned long)thisbitDuration;
 
         code <<= 1;
-        if (RCSwitch::timings[i] < RCSwitch::timings[i + 1]) {
+        if (this->timings[i] < this->timings[i + 1]) {
             // zero
             // sum accumulated duration of shorter level timings
-            delay += RCSwitch::timings[i];
+            delay += this->timings[i];
             // all appearances of delay can be removed if dropping backwards compatibility
         } else {
             // one
             code |= 1;
             // sum accumulated duration of shorter level timings
-            delay += RCSwitch::timings[i + 1];
+            delay += this->timings[i + 1];
             // all appearances of delay can be removed if dropping backwards compatibility
         }
 
         // for inverted protocols - timings are shifted
 
-        unsigned int alternatebitDuration = RCSwitch::timings[i + 1]+RCSwitch::timings[i + 2];
+        unsigned int alternatebitDuration = this->timings[i + 1]+this->timings[i + 2];
         alternatedataduration += alternatebitDuration;
         alternatesquareddataduration += (unsigned long)alternatebitDuration*(unsigned long)alternatebitDuration;
 
         alternatecode <<= 1;
-        if (RCSwitch::timings[i + 1] < RCSwitch::timings[i + 2]) {
+        if (this->timings[i + 1] < this->timings[i + 2]) {
             // zero
             // sum accumulated duration of shorter level timings
-            alternatedelay += RCSwitch::timings[i + 1];
+            alternatedelay += this->timings[i + 1];
             // all appearances of delay can be removed if dropping backwards compatibility
         } else {
             // one
             alternatecode |= 1;
             // sum accumulated duration of shorter level timings
-            alternatedelay += RCSwitch::timings[i + 2];
+            alternatedelay += this->timings[i + 2];
             // all appearances of delay can be removed if dropping backwards compatibility
         }
     }
@@ -779,19 +745,19 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
     delay = (int)(0.5 + ((double)delay)/numberofdatabits);
 
     // ratio between long and short timing
-    unsigned int protocolratio = (unsigned int)(0.5 + ((double)(averagebitduration - delay)) / (double)delay);
+    auto protocolratio = (unsigned int)(0.5 + ((double)(averagebitduration - delay)) / (double)delay);
 
     // improved pulselenght (delay) calculation
     int normalizedpulselength = (int)(0.5 + (double)averagebitduration/(double)(protocolratio+1));
 
     // store results
 
-    RCSwitch::nReceivedValue = code;
-    RCSwitch::nReceivedBitlength = numberofdatabits;
-    RCSwitch::nReceivedDelay = normalizedpulselength;
+    this->nReceivedValue = code;
+    this->nReceivedBitlength = numberofdatabits;
+    this->nReceivedDelay = normalizedpulselength;
 
-    RCSwitch::nReceivedInverted = invertedprotocoldecoded;
-    RCSwitch::nReceivedLevelInFirstTiming = tmpfirstperiodlevel;
+    this->nReceivedInverted = invertedprotocoldecoded;
+    this->nReceivedLevelInFirstTiming = tmpfirstperiodlevel;
 
 
     // for compatibility: check which protocol fits the data
@@ -799,7 +765,7 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
     // this can be completely removed from the receiver part of the library
     // and let the programer check if the received code is from the protocol
     // that was expected
-    const unsigned int delayTolerance = delay * RCSwitch::nReceiveTolerance / 100;
+    const unsigned int delayTolerance = delay * this->nReceiveTolerance / 100;
 
     for(unsigned int i = 1; i <= numProto; i++) {
 
@@ -814,14 +780,14 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
             diff(delay, pro.pulseLength) < delayTolerance && // pulse length is correct AND
             protocolratio == (int)(0.5 + (double)pro.one.high/(double)pro.one.low) && // long vs short ratio is correct AND
             ( (databitsstartinone) ?
-            diff(RCSwitch::timings[0], pro.syncFactor.low * delay) < (pro.syncFactor.low * delayTolerance) // the sync timing is correct
+            diff(this->timings[0], pro.syncFactor.low * delay) < (pro.syncFactor.low * delayTolerance) // the sync timing is correct
             :
-            diff(RCSwitch::timings[1], pro.syncFactor.low * delay) < (pro.syncFactor.low * delayTolerance) // the sync timing is correct
+            diff(this->timings[1], pro.syncFactor.low * delay) < (pro.syncFactor.low * delayTolerance) // the sync timing is correct
             )  &&
             ( (databitsstartinone) ?
-            diff(RCSwitch::timings[changeCount-1], pro.syncFactor.high * delay) < (pro.syncFactor.high * delayTolerance ) // the sync timing is correct
+            diff(this->timings[changeCount-1], pro.syncFactor.high * delay) < (pro.syncFactor.high * delayTolerance ) // the sync timing is correct
             :
-            diff(RCSwitch::timings[0], pro.syncFactor.high * delay) < (pro.syncFactor.high * delayTolerance ) // the sync timing is correct
+            diff(this->timings[0], pro.syncFactor.high * delay) < (pro.syncFactor.high * delayTolerance ) // the sync timing is correct
             )
             )
             { // the sync timing is correct
@@ -849,24 +815,19 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
      * The 2nd saved duration starts the data
      */
 
-    RCSwitch::nReceivedProtocol = finalp; // will be 0 if the code is recognized but it is of an unknown protocol
+    this->nReceivedProtocol = finalp; // will be 0 if the code is recognized but it is of an unknown protocol
     return true;
 
 }
 
 void RECEIVE_ATTR RCSwitch::handleInterrupt() {
-
-  static unsigned int changeCount = 0;
-  static unsigned long lastTime = 0;
-  static unsigned int repeatCount = 0;
-
-  const long time = micros();
+  const unsigned long time = micros();
   const unsigned int duration = time - lastTime;
 
-  if (duration > RCSwitch::nSeparationLimit && changeCount != 1 ) {
+  if (duration > nSeparationLimit && changeCount != 1 ) {
     // A long stretch without signal level change occurred. This could
     // be the gap between two transmission.
-    if ((repeatCount==0) || (diff(duration, RCSwitch::timings[0]) < 200)) {
+    if ((repeatCount==0) || (diff(duration, this->timings[0]) < 200)) {
       // This long signal is close in length to the long signal which
       // started the previously recorded timings; this suggests that
       // it may indeed by a a gap between two transmissions (we assume
@@ -874,24 +835,24 @@ void RECEIVE_ATTR RCSwitch::handleInterrupt() {
       // with roughly the same gap between them).
       repeatCount++;
       if (repeatCount == 2) {
-        receiveProtocol(1,changeCount);
+        receiveProtocol(1);
         repeatCount = 0;
       }
     }
     changeCount = 0;
     // store the opposite level, because the time recorded is the one of the previous level
-    RCSwitch::firstperiodlevel = ! digitalRead(RCSwitch::nStaticReceiverPin);
+    firstperiodlevel = ! digitalRead(nStaticReceiverPin);
   }
  
   // detect overflow
   if (changeCount >= RCSWITCH_MAX_CHANGES) {
     changeCount = 0;
     // store the opposite level, because the time recorded is the one of the previous level
-    RCSwitch::firstperiodlevel = ! digitalRead(RCSwitch::nStaticReceiverPin);
+    firstperiodlevel = ! digitalRead(nStaticReceiverPin);
     repeatCount = 0;
   }
 
-  RCSwitch::timings[changeCount++] = duration;
+  timings[changeCount++] = duration;
   lastTime = time;  
 }
 #endif

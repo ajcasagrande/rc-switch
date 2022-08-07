@@ -47,7 +47,21 @@
     #include "WProgram.h"
 #endif
 
+#if defined(ESP8266)
+// interrupt handler and related code must be in RAM on ESP8266,
+    // according to issue #46.
+    #define RECEIVE_ATTR ICACHE_RAM_ATTR
+    #define VAR_ISR_ATTR
+#elif defined(ESP32)
+#define RECEIVE_ATTR IRAM_ATTR
+#define VAR_ISR_ATTR DRAM_ATTR
+#else
+#define RECEIVE_ATTR
+    #define VAR_ISR_ATTR
+#endif
+
 #include <stdint.h>
+#include "FunctionalInterrupt.h"
 
 
 // At least for the ATTiny X4/X5, receiving has to be disabled due to
@@ -60,6 +74,8 @@
 // We can handle up to (unsigned long) => 32 bit * 2 H/L changes per bit + 2 for sync
 // note: increased to support
 #define RCSWITCH_MAX_CHANGES 90
+
+#define RCSWITCH_MIN_CHANGE_COUNT 8
 
 class RCSwitch {
 
@@ -82,19 +98,19 @@ class RCSwitch {
     void send(const char* sCodeWord);
     
     #if not defined( RCSwitchDisableReceiving )
-    void enableReceive(int interrupt);
-    void enableReceive();
-    void disableReceive();
-    bool available();
-    void resetAvailable();
+      void enableReceive(int interrupt);
+      void enableReceive();
+      void disableReceive();
+      bool available() const;
+      void resetAvailable();
 
-    unsigned long getReceivedValue();
-    unsigned int getReceivedBitlength();
-    unsigned int getReceivedDelay();
-    unsigned int getReceivedProtocol();
-    unsigned int* getReceivedRawdata();
-    bool getReceivedInverted();
-    unsigned int getReceivedLevelInFirstTiming();
+      unsigned long getReceivedValue() const;
+      unsigned int getReceivedBitlength() const;
+      unsigned int getReceivedDelay() const;
+      unsigned int getReceivedProtocol() const;
+      unsigned int* getReceivedRawdata();
+      bool getReceivedInverted() const;
+      unsigned int getReceivedLevelInFirstTiming() const;
     #endif
   
     void enableTransmit(int nTransmitterPin);
@@ -103,7 +119,7 @@ class RCSwitch {
     void setSyncFactor(uint8_t nSyncFactorHigh, uint8_t nSyncFactorLow);
     void setRepeatTransmit(int nRepeatTransmit);
     #if not defined( RCSwitchDisableReceiving )
-    void setReceiveTolerance(int nPercent);
+      void setReceiveTolerance(int nPercent);
     #endif
 
     /**
@@ -160,30 +176,37 @@ class RCSwitch {
     void transmit(HighLow pulses);
 
     #if not defined( RCSwitchDisableReceiving )
-    static void handleInterrupt();
-    static bool receiveProtocol(const int p, unsigned int changeCount);
-    int nReceiverInterrupt;
-    static int nStaticReceiverPin; // needed because nReceiverInterrupt (receiver pin) can not be read from handleInterrupt because it is static
+      void handleInterrupt();
+      bool receiveProtocol(int p);
+      int nReceiverInterrupt = -1;
+      int nStaticReceiverPin = -1; // needed because nReceiverInterrupt (receiver pin) can not be read from handleInterrupt because it is static
     #endif
-    int nTransmitterPin;
-    int nRepeatTransmit;
+    int nTransmitterPin = -1;
+    int nRepeatTransmit = 1;
     
-    Protocol protocol;
+    Protocol protocol{};
 
     #if not defined( RCSwitchDisableReceiving )
-    static int nReceiveTolerance;
-    volatile static unsigned long nReceivedValue;
-    volatile static unsigned int nReceivedBitlength;
-    volatile static unsigned int nReceivedDelay;
-    volatile static unsigned int nReceivedProtocol;
-    static bool nReceivedInverted;
-    static unsigned int nReceivedLevelInFirstTiming;
-    const static unsigned int nSeparationLimit;
-    /* 
-     * timings[0] contains sync timing, followed by a number of bits
-     */
-    static unsigned int firstperiodlevel;
-    static unsigned int timings[RCSWITCH_MAX_CHANGES];
+      int nReceiveTolerance = 60;
+      volatile unsigned long nReceivedValue = 0;
+      volatile unsigned int nReceivedBitlength = 0;
+      volatile unsigned int nReceivedDelay = 0;
+      volatile unsigned int nReceivedProtocol = 0;
+      bool nReceivedInverted = false;
+      unsigned int nReceivedLevelInFirstTiming = 0;
+      // separationLimit: minimum microseconds between received codes, closer codes are ignored.
+      // according to discussion on issue #14 it might be more suitable to set the separation
+      // limit to the same time as the 'low' part of the sync signal for the current protocol.
+      static const unsigned int VAR_ISR_ATTR nSeparationLimit = 2200;
+      /*
+       * timings[0] contains sync timing, followed by a number of bits
+       */
+      unsigned int firstperiodlevel = 0;
+      unsigned int timings[RCSWITCH_MAX_CHANGES]{};
+
+      volatile unsigned int changeCount = 0;
+      volatile unsigned long lastTime = 0;
+      volatile unsigned int repeatCount = 0;
     #endif
 
     
