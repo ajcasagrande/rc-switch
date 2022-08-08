@@ -60,8 +60,7 @@
     #define VAR_ISR_ATTR
 #endif
 
-#include <stdint.h>
-#include "FunctionalInterrupt.h"
+#include <cstdint>
 
 
 // At least for the ATTiny X4/X5, receiving has to be disabled due to
@@ -168,6 +167,10 @@ class RCSwitch {
     void setProtocol(int nProtocol);
     void setProtocol(int nProtocol, int nPulseLength);
 
+    #if not defined( RCSwitchDisableReceiving )
+      static void handleInterrupt(void* rcSwitch);
+    #endif
+
   private:
     char* getCodeWordA(const char* sGroup, const char* sDevice, bool bStatus);
     char* getCodeWordB(int nGroupNumber, int nSwitchNumber, bool bStatus);
@@ -176,7 +179,6 @@ class RCSwitch {
     void transmit(HighLow pulses);
 
     #if not defined( RCSwitchDisableReceiving )
-      void handleInterrupt();
       bool receiveProtocol(int p);
       int nReceiverInterrupt = -1;
       int nStaticReceiverPin = -1; // needed because nReceiverInterrupt (receiver pin) can not be read from handleInterrupt because it is static
@@ -197,7 +199,7 @@ class RCSwitch {
       // separationLimit: minimum microseconds between received codes, closer codes are ignored.
       // according to discussion on issue #14 it might be more suitable to set the separation
       // limit to the same time as the 'low' part of the sync signal for the current protocol.
-      static const unsigned int VAR_ISR_ATTR nSeparationLimit = 2200;
+      const unsigned int nSeparationLimit = 2200;
       /*
        * timings[0] contains sync timing, followed by a number of bits
        */

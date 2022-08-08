@@ -34,7 +34,6 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
-#include <functional>
 #include "RCSwitch.h"
 
 #ifdef RaspberryPi
@@ -43,6 +42,8 @@
     #define PROGMEM
     #define memcpy_P(dest, src, num) memcpy((dest), (src), (num))
 #endif
+
+#include <functional>
 
 
 /* Format for protocol definitions:
@@ -562,7 +563,7 @@ void RCSwitch::enableReceive() {
 #if defined(RaspberryPi) // Raspberry Pi
     wiringPiISR(this->nReceiverInterrupt, INT_EDGE_BOTH, &handleInterrupt);
 #else // Arduino
-    attachInterrupt(this->nReceiverInterrupt, std::bind(&RCSwitch::handleInterrupt, this), CHANGE);
+    attachInterruptArg(this->nReceiverInterrupt, RCSwitch::handleInterrupt, this, CHANGE);
 #endif
   }
 }
@@ -614,7 +615,7 @@ unsigned int RCSwitch::getReceivedLevelInFirstTiming() const {
 }
 
 /* helper function for the receiveProtocol method */
-static inline unsigned int diff(unsigned int A, unsigned int B) {
+static inline IRAM_ATTR unsigned int diff(unsigned int A, unsigned int B) {
   return (A > B) ? A - B : B - A;
 }
 
@@ -820,39 +821,41 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p) {
 
 }
 
-void RECEIVE_ATTR RCSwitch::handleInterrupt() {
-  const unsigned long time = micros();
-  const unsigned int duration = time - lastTime;
+void RECEIVE_ATTR RCSwitch::handleInterrupt(void* rcSwitch) {
+  auto self = static_cast<RCSwitch*>(rcSwitch);
 
-  if (duration > nSeparationLimit && changeCount != 1 ) {
+  const unsigned long time = micros();
+  const unsigned int duration = time - self->lastTime;
+
+  if (duration > self->nSeparationLimit && self->changeCount != 1 ) {
     // A long stretch without signal level change occurred. This could
     // be the gap between two transmission.
-    if ((repeatCount==0) || (diff(duration, this->timings[0]) < 200)) {
+    if ((self->repeatCount==0) || (diff(duration, self->timings[0]) < 200)) {
       // This long signal is close in length to the long signal which
       // started the previously recorded timings; this suggests that
       // it may indeed by a a gap between two transmissions (we assume
       // here that a sender will send the signal multiple times,
       // with roughly the same gap between them).
-      repeatCount++;
-      if (repeatCount == 2) {
-        receiveProtocol(1);
-        repeatCount = 0;
+      self->repeatCount++;
+      if (self->repeatCount == 2) {
+        self->receiveProtocol(1);
+        self->repeatCount = 0;
       }
     }
-    changeCount = 0;
+    self->changeCount = 0;
     // store the opposite level, because the time recorded is the one of the previous level
-    firstperiodlevel = ! digitalRead(nStaticReceiverPin);
+    self->firstperiodlevel = ! digitalRead(self->nStaticReceiverPin);
   }
  
   // detect overflow
-  if (changeCount >= RCSWITCH_MAX_CHANGES) {
-    changeCount = 0;
+  if (self->changeCount >= RCSWITCH_MAX_CHANGES) {
+    self->changeCount = 0;
     // store the opposite level, because the time recorded is the one of the previous level
-    firstperiodlevel = ! digitalRead(nStaticReceiverPin);
-    repeatCount = 0;
+    self->firstperiodlevel = ! digitalRead(self->nStaticReceiverPin);
+    self->repeatCount = 0;
   }
 
-  timings[changeCount++] = duration;
-  lastTime = time;  
+  self->timings[self->changeCount++] = duration;
+  self->lastTime = time;
 }
 #endif
